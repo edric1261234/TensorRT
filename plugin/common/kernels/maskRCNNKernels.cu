@@ -1469,8 +1469,42 @@ cudaError_t roiAlign(cudaStream_t stream, int batchSize, int featureCount, int r
     return cudaGetLastError();
 }
 
-__global__ void resize_nearest_kernel_2d(int nbatch, float scale, int2 osize, float const* idata, int istride,
+__global__ void resize_bilinear_kernel_2d(int nbatch, float scale, int2 osize, float const* idata, int istride,
     int ibatchstride, float* odata, int ostride, int obatchstride)
+{
+    int x0 = threadIdx.x + blockIdx.x * blockDim.x;
+    int y0 = threadIdx.y + blockIdx.y * blockDim.y;
+    int z0 = blockIdx.z;
+    for (int batch = z0; batch < nbatch; batch += gridDim.z)
+    {
+        for (int oy = y0; oy < osize.y; oy += blockDim.y * gridDim.y)
+        {
+            for (int ox = x0; ox < osize.x; ox += blockDim.x * gridDim.x)
+            {
+                const float f_x = ox / scale ;
+                const float f_y = oy / scale;
+                const int ix = (int)(f_x);
+                const int iy = (int)(f_y);
+                const float x_diff = f_x - ix;
+                const float y_diff = f_y - iy;
+
+                const int index = batch * ibatchstride + iy * istride + ix;
+                const float a = idata[index];
+                const float b = idata[index + 1];
+                const float c = idata[index + istride];
+                const float d = idata[index + istride + 1];
+
+                odata[batch * obatchstride + oy * ostride + ox] = a * (1 - x_diff) * (1 - y_diff) +
+                    b * (x_diff) * (1 - y_diff) +
+                    c * (y_diff) * (1 - x_diff) +
+                    d * (x_diff * y_diff);
+            }
+        }
+    }
+}
+
+__global__ void resize_nearest_kernel_2d(int nbatch, float scale, int2 osize, float const* idata, int istride,
+                                         int ibatchstride, float* odata, int ostride, int obatchstride)
 {
 
     int x0 = threadIdx.x + blockIdx.x * blockDim.x;
@@ -1495,6 +1529,14 @@ void resizeNearest(dim3 grid, dim3 block, cudaStream_t stream, int nbatch, float
 {
 
     resize_nearest_kernel_2d<<<grid, block, 0, stream>>>(
+        nbatch, scale, osize, idata, istride, ibatchstride, odata, ostride, obatchstride);
+}
+
+void resizeBilinear(dim3 grid, dim3 block, cudaStream_t stream, int nbatch, float scale, int2 osize, float const* idata,
+                   int istride, int ibatchstride, float* odata, int ostride, int obatchstride)
+{
+
+    resize_bilinear_kernel_2d<<<grid, block, 0, stream>>>(
         nbatch, scale, osize, idata, istride, ibatchstride, odata, ostride, obatchstride);
 }
 

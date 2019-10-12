@@ -33,7 +33,7 @@ namespace plugin
 class ResizeNearest : public IPluginV2Ext
 {
 public:
-    ResizeNearest(int width, int height);
+    ResizeNearest(int width, int height, int interpolation);
 
     ResizeNearest(const void* data, size_t length);
 
@@ -86,7 +86,7 @@ public:
     void detachFromContext() override;
 
 private:
-    int mWidth, mHeight;
+    int mWidth, mHeight, mInterpolation;
     Dims mInputDims;
     Dims mOutputDims;
     std::string mNameSpace;
@@ -111,7 +111,7 @@ public:
 
 private:
     static PluginFieldCollection mFC;
-    int mWidth, mHeight;
+    int mWidth, mHeight, mInterpolation;
     static std::vector<PluginField> mPluginAttributes;
 };
 } // namespace plugin

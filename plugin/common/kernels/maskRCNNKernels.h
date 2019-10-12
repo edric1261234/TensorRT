@@ -195,6 +195,11 @@ cudaError_t roiAlign(cudaStream_t stream, int batchSize, int featureCount, int r
 // RESIZE NEAREST
 void resizeNearest(dim3 grid, dim3 block, cudaStream_t stream, int nbatch, float scale, int2 osize, float const* idata,
     int istride, int ibatchstride, float* odata, int ostride, int obatchstride);
+
+// RESIZE NEAREST
+void resizeBilinear(dim3 grid, dim3 block, cudaStream_t stream, int nbatch, float scale, int2 osize, float const* idata,
+                   int istride, int ibatchstride, float* odata, int ostride, int obatchstride);
+
 // SPECIAL SLICE
 void specialSlice(cudaStream_t stream, int batch_size, int boxes_cnt, const void* idata, void* odata);
 
