@@ -80,9 +80,9 @@ set(CMAKE_CXX_FLAGS "-Wno-deprecated-declarations ${CMAKE_CXX_FLAGS} -DBUILD_SYS
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wno-deprecated-declarations")
 
 ################################### DEPENDENCIES ##########################################
-set(DEFAULT_CUDA_VERSION 10.1)
+set(DEFAULT_CUDA_VERSION 10.0)
 set(DEFAULT_CUDNN_VERSION 7.5)
-set(DEFAULT_PROTOBUF_VERSION 3.0.0)
+set(DEFAULT_PROTOBUF_VERSION 3.5.1)
 set(DEFAULT_PROTOBUF_INTERNAL_VERSION 10.0)
 set(DEFAULT_CUB_VERSION 1.8.0)
 

@@ -17,8 +17,10 @@
 #include "plugin.h"
 #include <cuda_runtime_api.h>
 #include <iostream>
+#include<fstream>
+#include<iostream>
 
-#define DEBUG 0
+#define DEBUG 1
 
 using namespace nvinfer1;
 using namespace plugin;
@@ -36,7 +38,10 @@ std::vector<PluginField> ResizeNearestPluginCreator::mPluginAttributes;
 
 ResizeNearestPluginCreator::ResizeNearestPluginCreator()
 {
-    mPluginAttributes.emplace_back(PluginField("scale", nullptr, PluginFieldType::kFLOAT32, 1));
+    mPluginAttributes.emplace_back(PluginField("width", nullptr, PluginFieldType::kINT32, 1));
+    mPluginAttributes.emplace_back(PluginField("height", nullptr, PluginFieldType::kINT32, 1));
+    mPluginAttributes.emplace_back(PluginField("nchw", nullptr, PluginFieldType::kINT32, 1));
+    mPluginAttributes.emplace_back(PluginField("index", nullptr, PluginFieldType::kINT32, 1));
 
     mFC.nbFields = mPluginAttributes.size();
     mFC.fields = mPluginAttributes.data();
@@ -63,13 +68,17 @@ IPluginV2Ext* ResizeNearestPluginCreator::createPlugin(const char* name, const P
     for (int i = 0; i < fc->nbFields; ++i)
     {
         const char* attrName = fields[i].name;
-        if (!strcmp(attrName, "scale"))
+        if (!strcmp(attrName, "width"))
         {
-            assert(fields[i].type == PluginFieldType::kFLOAT32);
-            mScale = *(static_cast<const float*>(fields[i].data));
+            assert(fields[i].type == PluginFieldType::kINT32);
+            mWidth = *(static_cast<const int32_t*>(fields[i].data));
+        } else  if (!strcmp(attrName, "height"))
+        {
+            assert(fields[i].type == PluginFieldType::kINT32);
+            mHeight = *(static_cast<const int32_t*>(fields[i].data));
         }
     }
-    return new ResizeNearest(mScale);
+    return new ResizeNearest(mWidth, mHeight);
 };
 
 IPluginV2Ext* ResizeNearestPluginCreator::deserializePlugin(const char* name, const void* data, size_t length)
@@ -77,10 +86,12 @@ IPluginV2Ext* ResizeNearestPluginCreator::deserializePlugin(const char* name, co
     return new ResizeNearest(data, length);
 };
 
-ResizeNearest::ResizeNearest(float scale)
-    : mScale(scale)
+ResizeNearest::ResizeNearest(int width, int height)
+    : mWidth(width)
+    , mHeight(height)
 {
-    assert(mScale > 0);
+    assert(width > 0);
+    assert(height > 0);
 };
 
 int ResizeNearest::getNbOutputs() const
@@ -95,19 +106,47 @@ Dims ResizeNearest::getOutputDimensions(int index, const Dims* inputDims, int nb
     assert(index == 0);
     nvinfer1::Dims output;
     output.nbDims = input.nbDims;
-    for (int d = 0; d < input.nbDims; ++d)
-    {
-        if (d == input.nbDims - 2 || d == input.nbDims - 1)
-        {
-            output.d[d] = int(input.d[d] * mScale);
-        }
-        else
-        {
-            output.d[d] = input.d[d];
-        }
-    }
+    output.d[0] = input.d[0];
+    output.d[1] = mHeight;
+    output.d[2] = mWidth;
+//    std::ofstream OutFile("/home/tal/test.txt", std::ios::app);
+//    OutFile <<"input dims " << std::to_string(input.d[0]) << " " << std::to_string(input.d[1]) << " " << std::to_string(input.d[2]) << std::endl;
+//    OutFile << mHeight << " " << mWidth << std::endl;
+//    OutFile <<"output dims " << std::to_string(output.d[0]) << " " << std::to_string(output.d[1]) << " " << std::to_string(output.d[2]) << std::endl;
+//    OutFile.close();
     return output;
 };
+
+//Dims ResizeNearest::getOutputDimensions(int index, const Dims* inputDims, int nbInputs)
+//{
+//    assert(nbInputs == 1);
+//    nvinfer1::Dims const& input = inputDims[0];
+//    assert(index == 0);
+//    nvinfer1::Dims output;
+//    output.nbDims = input.nbDims;
+//    for (int d = 0; d < input.nbDims; ++d)
+//    {
+//        if (d == input.nbDims - 2)
+//        {
+//            output.d[d] = mWidth;
+//        }
+//        else if (d == input.nbDims - 1)
+//        {
+//            output.d[d] = mHeight;
+//        }
+//        else
+//        {
+//            output.d[d] = input.d[d];
+//        }
+//    }
+//    std::ofstream OutFile("/home/tal/Test.txt");
+//    OutFile <<"input dims " << std::to_string(input.d[0]) << " " << std::to_string(input.d[1]) << " " << std::to_string(input.d[2]) << std::endl;
+//    OutFile << mHeight << " " << mWidth << std::endl;
+//    OutFile <<"output dims " << std::to_string(output.d[0]) << " " << std::to_string(output.d[1]) << " " << std::to_string(output.d[2]) << std::endl;
+//    OutFile.close();
+//    return output;
+//};
+
 
 int ResizeNearest::initialize()
 {
@@ -129,27 +168,30 @@ size_t ResizeNearest::getWorkspaceSize(int) const
 
 size_t ResizeNearest::getSerializationSize() const
 {
-    // scale, dimensions: 3 * 2
-    return sizeof(float) + sizeof(int) * 3 * 2;
+    // height, width, dimensions: 3 * 2
+    return sizeof(int) * 2 + sizeof(int) * 3 * 2;
 };
 
 void ResizeNearest::serialize(void* buffer) const
 {
     char *d = reinterpret_cast<char*>(buffer), *a = d;
-    write(d, mScale);
+    write(d, mHeight);
+    write(d, mWidth);
     write(d, mInputDims.d[0]);
     write(d, mInputDims.d[1]);
     write(d, mInputDims.d[2]);
     write(d, mOutputDims.d[0]);
     write(d, mOutputDims.d[1]);
     write(d, mOutputDims.d[2]);
+
     ASSERT(d == a + getSerializationSize());
 };
 
 ResizeNearest::ResizeNearest(const void* data, size_t length)
 {
     const char *d = reinterpret_cast<const char*>(data), *a = d;
-    mScale = read<float>(d);
+    mHeight = read<int>(d);
+    mWidth = read<int>(d);
     mInputDims = Dims3();
     mInputDims.d[0] = read<int>(d);
     mInputDims.d[1] = read<int>(d);
@@ -158,6 +200,7 @@ ResizeNearest::ResizeNearest(const void* data, size_t length)
     mOutputDims.d[0] = read<int>(d);
     mOutputDims.d[1] = read<int>(d);
     mOutputDims.d[2] = read<int>(d);
+
     ASSERT(d == a + length);
 };
 
@@ -191,22 +234,23 @@ bool ResizeNearest::supportsFormat(DataType type, PluginFormat format) const
     return (type == DataType::kFLOAT && format == PluginFormat::kNCHW);
 };
 
+
 int ResizeNearest::enqueue(
     int batch_size, const void* const* inputs, void** outputs, void* workspace, cudaStream_t stream)
 {
-
     int nchan = mOutputDims.d[0];
-    float scale = mScale;
+
     int2 osize = {mOutputDims.d[2], mOutputDims.d[1]};
     int istride = mInputDims.d[2];
     int ostride = mOutputDims.d[2];
-    int ibatchstride = mInputDims.d[1] * istride;
+    float scale = 1.0f * ostride / istride;
+    int ibatchstride =  mInputDims.d[1] * istride;
     int obatchstride = mOutputDims.d[1] * ostride;
     dim3 block(32, 16);
     dim3 grid((osize.x - 1) / block.x + 1, (osize.y - 1) / block.y + 1, std::min(batch_size * nchan, 65535));
 
     resizeNearest(grid, block, stream, batch_size * nchan, scale, osize, static_cast<float const*>(inputs[0]), istride,
-        ibatchstride, static_cast<float*>(outputs[0]), ostride, obatchstride);
+                  ibatchstride, static_cast<float*>(outputs[0]), ostride, obatchstride);
 
     return cudaGetLastError() != cudaSuccess;
 };
