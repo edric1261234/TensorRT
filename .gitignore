@@ -1,3 +1,6 @@
 build/
 .idea
 cmake-build*
+*.pb
+*.uff
+*__pycache_*
