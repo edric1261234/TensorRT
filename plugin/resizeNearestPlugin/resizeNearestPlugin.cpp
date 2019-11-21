@@ -40,6 +40,7 @@ ResizeNearestPluginCreator::ResizeNearestPluginCreator()
 {
     mPluginAttributes.emplace_back(PluginField("width", nullptr, PluginFieldType::kINT32, 1));
     mPluginAttributes.emplace_back(PluginField("height", nullptr, PluginFieldType::kINT32, 1));
+    mPluginAttributes.emplace_back(PluginField("scale", nullptr, PluginFieldType::kFLOAT32, 1));
     mPluginAttributes.emplace_back(PluginField("interpolation", nullptr, PluginFieldType::kINT32, 1));
 
     mFC.nbFields = mPluginAttributes.size();
@@ -80,8 +81,13 @@ IPluginV2Ext* ResizeNearestPluginCreator::createPlugin(const char* name, const P
             assert(fields[i].type == PluginFieldType::kINT32);
             mInterpolation = *(static_cast<const int32_t*>(fields[i].data));
         }
+        else  if (!strcmp(attrName, "scale"))
+        {
+            assert(fields[i].type == PluginFieldType::kFLOAT32);
+            mScale = *(static_cast<const float*>(fields[i].data));
+        }
     }
-    return new ResizeNearest(mWidth, mHeight, mInterpolation);
+    return new ResizeNearest(mWidth, mHeight, mScale, mInterpolation);
 };
 
 IPluginV2Ext* ResizeNearestPluginCreator::deserializePlugin(const char* name, const void* data, size_t length)
@@ -89,13 +95,15 @@ IPluginV2Ext* ResizeNearestPluginCreator::deserializePlugin(const char* name, co
     return new ResizeNearest(data, length);
 };
 
-ResizeNearest::ResizeNearest(int width, int height, int interpolation)
+ResizeNearest::ResizeNearest(int width, int height, float scale, int interpolation)
     : mWidth(width)
     , mHeight(height)
     , mInterpolation(interpolation)
+    , mScale(scale)
 {
-    assert(width > 0);
-    assert(height > 0);
+    assert(width >= 0);
+    assert(height >= 0);
+    assert(scale >= 0);
     assert(interpolation >= 0);
 };
 
@@ -112,8 +120,14 @@ Dims ResizeNearest::getOutputDimensions(int index, const Dims* inputDims, int nb
     nvinfer1::Dims output;
     output.nbDims = input.nbDims;
     output.d[0] = input.d[0];
-    output.d[1] = mHeight;
-    output.d[2] = mWidth;
+    if (mHeight > 0 && mWidth > 0) {
+        output.d[1] = mHeight;
+        output.d[2] = mWidth;
+    } else {
+        output.d[1] = int(input.d[1] * mScale);;
+        output.d[2] = int(input.d[2] * mScale);;
+    }
+
     return output;
 };
 
@@ -137,8 +151,8 @@ size_t ResizeNearest::getWorkspaceSize(int) const
 
 size_t ResizeNearest::getSerializationSize() const
 {
-    // height, width, interpolation, dimensions: 3 * 2
-    return sizeof(int) * 3 + sizeof(int) * 3 * 2;
+    // height, width, interpolation, scale, dimensions: 3 * 2
+    return sizeof(int) * 3 + sizeof(float) + sizeof(int) * 3 * 2;
 };
 
 void ResizeNearest::serialize(void* buffer) const
@@ -146,6 +160,7 @@ void ResizeNearest::serialize(void* buffer) const
     char *d = reinterpret_cast<char*>(buffer), *a = d;
     write(d, mHeight);
     write(d, mWidth);
+    write(d, mScale);
     write(d, mInterpolation);
     write(d, mInputDims.d[0]);
     write(d, mInputDims.d[1]);
@@ -162,6 +177,7 @@ ResizeNearest::ResizeNearest(const void* data, size_t length)
     const char *d = reinterpret_cast<const char*>(data), *a = d;
     mHeight = read<int>(d);
     mWidth = read<int>(d);
+    mScale = read<float>(d);
     mInterpolation = read<int>(d);
     mInputDims = Dims3();
     mInputDims.d[0] = read<int>(d);
