@@ -13,37 +13,39 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "gridAnchorPlugin.h"
+#include "multiScaleAnchorPlugin.h"
 #include <cstring>
 #include <cublas_v2.h>
 #include <cudnn.h>
 #include <iostream>
 #include <sstream>
 #include <vector>
+#include <cmath>
 
 using namespace nvinfer1;
-using nvinfer1::plugin::GridAnchorGenerator;
-using nvinfer1::plugin::GridAnchorPluginCreator;
+using nvinfer1::plugin::MultiScaleAnchorGenerator;
+using nvinfer1::plugin::MultiScaleAnchorPluginCreator;
 
 namespace
 {
-const char* GRID_ANCHOR_PLUGIN_VERSION{"1"};
-const char* GRID_ANCHOR_PLUGIN_NAME{"GridAnchor_TRT"};
+const char* MULTI_SCALE_ANCHOR_PLUGIN_VERSION{"1"};
+const char* MULTI_SCALE_ANCHOR_PLUGIN_NAME{"MultiScaleAnchor_TRT"};
 } // namespace
-PluginFieldCollection GridAnchorPluginCreator::mFC{};
-std::vector<PluginField> GridAnchorPluginCreator::mPluginAttributes;
+PluginFieldCollection MultiScaleAnchorPluginCreator::mFC{};
+std::vector<PluginField> MultiScaleAnchorPluginCreator::mPluginAttributes;
 
-GridAnchorGenerator::GridAnchorGenerator(const GridAnchorParameters* paramIn, int mNumLayers)
+MultiScaleAnchorGenerator::MultiScaleAnchorGenerator(const MultiScaleAnchorParameters* paramIn, int mNumLayers)
     : mNumLayers(mNumLayers)
 {
     CUASSERT(cudaMallocHost((void**) &mNumPriors, mNumLayers * sizeof(int)));
-    CUASSERT(cudaMallocHost((void**) &mDeviceWidths, mNumLayers * sizeof(Weights)));
-    CUASSERT(cudaMallocHost((void**) &mDeviceHeights, mNumLayers * sizeof(Weights)));
+    CUASSERT(cudaMallocHost((void**) &mDeviceWidths, mNumLayers * paramIn[0].scalesPerOctave * sizeof(Weights)));
+    CUASSERT(cudaMallocHost((void**) &mDeviceHeights, mNumLayers * paramIn[0].scalesPerOctave * sizeof(Weights)));
 
     mParam.resize(mNumLayers);
     for (int id = 0; id < mNumLayers; id++)
     {
         mParam[id] = paramIn[id];
+        std::cout << "mParam[id] H " << mParam[id].H << std::endl;
         ASSERT(mParam[id].numAspectRatios >= 0 && mParam[id].aspectRatios != nullptr);
 
         mParam[id].aspectRatios = (float*) malloc(sizeof(float) * mParam[id].numAspectRatios);
@@ -53,71 +55,37 @@ GridAnchorGenerator::GridAnchorGenerator(const GridAnchorParameters* paramIn, in
             mParam[id].aspectRatios[i] = paramIn[id].aspectRatios[i];
         }
 
-        for (int i = 0; i < 4; ++i)
-        {
-            mParam[id].variance[i] = paramIn[id].variance[i];
-        }
-
-        std::vector<float> tmpScales(mNumLayers + 1);
-
-        // Calculate the scales of SSD model for each layer
-        for (int i = 0; i < mNumLayers; i++)
-        {
-            tmpScales[i] = (mParam[id].minSize + (mParam[id].maxSize - mParam[id].minSize) * id / (mNumLayers - 1));
-        }
-        // Add another 1.0f to tmpScales to prevent going out side of the vector in calculating the scale_next.
-        tmpScales.push_back(1.0f); // has 7 entries
-        // scale0 are for the first layer specifically
-        std::vector<float> scale0 = {0.1f, tmpScales[0], tmpScales[0]};
-
         std::vector<float> aspect_ratios;
         std::vector<float> scales;
 
-        // The first layer is different
-        if (id == 0)
+        for (int i = 0; i < mParam[id].numAspectRatios; i++)
         {
-            for (int i = 0; i < mParam[id].numAspectRatios; i++)
-            {
-                aspect_ratios.push_back(mParam[id].aspectRatios[i]);
-                scales.push_back(scale0[i]);
-            }
-            mNumPriors[id] = mParam[id].numAspectRatios;
+            aspect_ratios.push_back(mParam[id].aspectRatios[i]);
+        }
+        // scales
+        for (int j = 0; j < mParam[id].scalesPerOctave; j++) {
+            scales.push_back(
+                mParam[id].anchorScale * (1.0 / mParam[id].H) *
+                pow(2, 1.0 * j / paramIn[id].scalesPerOctave));
         }
 
-        else
-        {
-            for (int i = 0; i < mParam[id].numAspectRatios; i++)
-            {
-                aspect_ratios.push_back(mParam[id].aspectRatios[i]);
-            }
-            // Additional aspect ratio of 1.0 as described in the paper
-            aspect_ratios.push_back(1.0);
-
-            // scales
-            for (int i = 0; i < mParam[id].numAspectRatios; i++)
-            {
-                scales.push_back(tmpScales[id]);
-            }
-            auto scale_next = (id == mNumLayers - 1)
-                ? 1.0
-                : (mParam[id].minSize + (mParam[id].maxSize - mParam[id].minSize) * (id + 1) / (mNumLayers - 1));
-            scales.push_back(sqrt(tmpScales[id] * scale_next));
-
-            mNumPriors[id] = mParam[id].numAspectRatios + 1;
-        }
+        mNumPriors[id] = mParam[id].numAspectRatios * paramIn[id].scalesPerOctave;
 
         std::vector<float> tmpWidths;
         std::vector<float> tmpHeights;
-        //std::cout << "=============layer id " << id << std::endl;
         // Calculate the width and height of the prior boxes
-        for (int i = 0; i < mNumPriors[id]; i++)
+        for (int i = 0; i < mParam[id].numAspectRatios; i++)
         {
             float sqrt_AR = sqrt(aspect_ratios[i]);
-            tmpWidths.push_back(scales[i] * sqrt_AR);
-            tmpHeights.push_back(scales[i] / sqrt_AR);
-            //std::cout << "mNumPriors[id] is" << mNumPriors[id] << std::endl;
-            //std::cout << "tmpWidths is" << scales[i] * sqrt_AR << std::endl;
-            //std::cout << "tmpHeights is" << scales[i] / sqrt_AR << std::endl;
+            for (int j = 0; j < scales.size(); j++) {
+                tmpWidths.push_back(scales[j] * sqrt_AR);
+                tmpHeights.push_back(scales[j] / sqrt_AR);
+                // std::cout << 
+                // aspect_ratios[i] << " " <<
+                // scales[j] << " " << 
+                // scales[j] * sqrt_AR << " " << 
+                // scales[j] / sqrt_AR << std::endl;
+            }
         }
 
         mDeviceWidths[id] = copyToDevice(&tmpWidths[0], tmpWidths.size());
@@ -125,19 +93,17 @@ GridAnchorGenerator::GridAnchorGenerator(const GridAnchorParameters* paramIn, in
     }
 }
 
-GridAnchorGenerator::GridAnchorGenerator(const void* data, size_t length)
+MultiScaleAnchorGenerator::MultiScaleAnchorGenerator(const void* data, size_t length)
 {
     const char *d = reinterpret_cast<const char*>(data), *a = d;
     mNumLayers = read<int>(d);
-    CUASSERT(cudaMallocHost((void**) &mNumPriors, mNumLayers * sizeof(int)));
-    CUASSERT(cudaMallocHost((void**) &mDeviceWidths, mNumLayers * sizeof(Weights)));
-    CUASSERT(cudaMallocHost((void**) &mDeviceHeights, mNumLayers * sizeof(Weights)));
+    
     mParam.resize(mNumLayers);
     for (int id = 0; id < mNumLayers; id++)
     {
         // we have to deserialize GridAnchorParameters by hand
-        mParam[id].minSize = read<float>(d);
-        mParam[id].maxSize = read<float>(d);
+        mParam[id].minLevel = read<int>(d);
+        mParam[id].maxLevel = read<int>(d);
         mParam[id].numAspectRatios = read<int>(d);
         mParam[id].aspectRatios = (float*) malloc(sizeof(float) * mParam[id].numAspectRatios);
         for (int i = 0; i < mParam[id].numAspectRatios; ++i)
@@ -154,12 +120,17 @@ GridAnchorGenerator::GridAnchorGenerator(const void* data, size_t length)
         mNumPriors[id] = read<int>(d);
         mDeviceWidths[id] = deserializeToDevice(d, mNumPriors[id]);
         mDeviceHeights[id] = deserializeToDevice(d, mNumPriors[id]);
-    }
 
+        mParam[id].anchorScale = read<float>(d);
+        mParam[id].scalesPerOctave = read<int>(d);
+    }
+    CUASSERT(cudaMallocHost((void**) &mNumPriors, mNumLayers * sizeof(int)));
+    CUASSERT(cudaMallocHost((void**) &mDeviceWidths, mNumLayers * mParam[0].scalesPerOctave * sizeof(Weights)));
+    CUASSERT(cudaMallocHost((void**) &mDeviceHeights, mNumLayers * mParam[0].scalesPerOctave * sizeof(Weights)));
     ASSERT(d == a + length);
 }
 
-GridAnchorGenerator::~GridAnchorGenerator()
+MultiScaleAnchorGenerator::~MultiScaleAnchorGenerator()
 {
     for (int id = 0; id < mNumLayers; id++)
     {
@@ -172,12 +143,12 @@ GridAnchorGenerator::~GridAnchorGenerator()
     CUERRORMSG(cudaFreeHost(mDeviceHeights));
 }
 
-int GridAnchorGenerator::getNbOutputs() const
+int MultiScaleAnchorGenerator::getNbOutputs() const
 {
     return mNumLayers;
 }
 
-Dims GridAnchorGenerator::getOutputDimensions(int index, const Dims* inputs, int nbInputDims)
+Dims MultiScaleAnchorGenerator::getOutputDimensions(int index, const Dims* inputs, int nbInputDims)
 {
     // Particularity of the PriorBox layer: no batchSize dimension needed
     // 2 channels. First channel stores the mean of each prior coordinate.
@@ -185,52 +156,45 @@ Dims GridAnchorGenerator::getOutputDimensions(int index, const Dims* inputs, int
     return DimsCHW(2, mParam[index].H * mParam[index].W * mNumPriors[index] * 4, 1);
 }
 
-int GridAnchorGenerator::initialize()
+int MultiScaleAnchorGenerator::initialize()
 {
     return STATUS_SUCCESS;
 }
 
-void GridAnchorGenerator::terminate() {}
+void MultiScaleAnchorGenerator::terminate() {}
 
-size_t GridAnchorGenerator::getWorkspaceSize(int maxBatchSize) const
+size_t MultiScaleAnchorGenerator::getWorkspaceSize(int maxBatchSize) const
 {
     return 0;
 }
 
-Weights GridAnchorGenerator::copyToHost(const void* deviceData, size_t count)
-{
-    void* hostData;
-    hostData = malloc(count * sizeof(float));
-    CUASSERT(cudaMemcpy(hostData, deviceData, count * sizeof(float), cudaMemcpyDeviceToHost));
-    return Weights{DataType::kFLOAT, hostData, int64_t(count)};
-}
-
-int GridAnchorGenerator::enqueue(
+int MultiScaleAnchorGenerator::enqueue(
     int batchSize, const void* const* inputs, void** outputs, void* workspace, cudaStream_t stream)
 {
     // Generate prior boxes for each layer
     for (int id = 0; id < mNumLayers; id++)
     {
         void* outputData = outputs[id];
-        pluginStatus_t status = anchorGridInference(
+        pluginStatus_t status = multiScaleGridInference(
             stream, mParam[id], mNumPriors[id], mDeviceWidths[id].values, mDeviceHeights[id].values, outputData);
         ASSERT(status == STATUS_SUCCESS);
-        // Weights w = copyToHost(outputData, 16);
-        // const float* ptr = static_cast<const float*>(w.values);
-        // for (int i = 0; i < 16 / 4; i++) {
-        //     std::cout << i 
-        //     << ":" << *(ptr + 4 * i ) 
-        //     << " " << *(ptr + 4 * i + 1) 
-        //     << " " << *(ptr + 4 * i + 2) 
-        //     << " " << *(ptr + 4 * i + 3) 
-        //     << std::endl;
-        // }
-        // std::cout << "=================" << std::endl;
+        Weights w = copyToHost(outputData, 64);
+        const float* ptr = static_cast<const float*>(w.values);
+        for (int i = 0; i < 64 / 4; i++) {
+            std::cout << i 
+            << ":" << *(ptr + 4 * i ) * 640
+            << " " << *(ptr + 4 * i + 1) * 640
+            << " " << *(ptr + 4 * i + 2) * 640
+            << " " << *(ptr + 4 * i + 3) * 640
+            << std::endl;
+        }
+        std::cout << "=================" << std::endl;
+        
     }
     return STATUS_SUCCESS;
 }
 
-size_t GridAnchorGenerator::getSerializationSize() const
+size_t MultiScaleAnchorGenerator::getSerializationSize() const
 {
     size_t sum = sizeof(int); // mNumLayers
     for (int i = 0; i < mNumLayers; i++)
@@ -240,19 +204,21 @@ size_t GridAnchorGenerator::getSerializationSize() const
             * sizeof(float); // mParam[i].{minSize, maxSize, aspectRatios, variance[4]}
         sum += mDeviceWidths[i].count * sizeof(float);
         sum += mDeviceHeights[i].count * sizeof(float);
+        sum += sizeof(float); // anchorScale
+        sum += sizeof(int); //scalesPerOctave
     }
     return sum;
 }
 
-void GridAnchorGenerator::serialize(void* buffer) const
+void MultiScaleAnchorGenerator::serialize(void* buffer) const
 {
     char *d = reinterpret_cast<char*>(buffer), *a = d;
     write(d, mNumLayers);
     for (int id = 0; id < mNumLayers; id++)
     {
         // we have to serialize GridAnchorParameters by hand
-        write(d, mParam[id].minSize);
-        write(d, mParam[id].maxSize);
+        write(d, mParam[id].minLevel);
+        write(d, mParam[id].maxLevel);
         write(d, mParam[id].numAspectRatios);
         for (int i = 0; i < mParam[id].numAspectRatios; ++i)
         {
@@ -266,13 +232,16 @@ void GridAnchorGenerator::serialize(void* buffer) const
         }
 
         write(d, mNumPriors[id]);
+        write(d, mParam[id].anchorScale);
+        write(d, mParam[id].scalesPerOctave);
+
         serializeFromDevice(d, mDeviceWidths[id]);
         serializeFromDevice(d, mDeviceHeights[id]);
     }
     ASSERT(d == a + getSerializationSize());
 }
 
-Weights GridAnchorGenerator::copyToDevice(const void* hostData, size_t count)
+Weights MultiScaleAnchorGenerator::copyToDevice(const void* hostData, size_t count)
 {
     void* deviceData;
     CUASSERT(cudaMalloc(&deviceData, count * sizeof(float)));
@@ -280,67 +249,75 @@ Weights GridAnchorGenerator::copyToDevice(const void* hostData, size_t count)
     return Weights{DataType::kFLOAT, deviceData, int64_t(count)};
 }
 
-void GridAnchorGenerator::serializeFromDevice(char*& hostBuffer, Weights deviceWeights) const
+Weights MultiScaleAnchorGenerator::copyToHost(const void* deviceData, size_t count)
+{
+    void* hostData;
+    hostData = malloc(count * sizeof(float));
+    CUASSERT(cudaMemcpy(hostData, deviceData, count * sizeof(float), cudaMemcpyDeviceToHost));
+    return Weights{DataType::kFLOAT, hostData, int64_t(count)};
+}
+
+void MultiScaleAnchorGenerator::serializeFromDevice(char*& hostBuffer, Weights deviceWeights) const
 {
     cudaMemcpy(hostBuffer, deviceWeights.values, deviceWeights.count * sizeof(float), cudaMemcpyDeviceToHost);
     hostBuffer += deviceWeights.count * sizeof(float);
 }
 
-Weights GridAnchorGenerator::deserializeToDevice(const char*& hostBuffer, size_t count)
+Weights MultiScaleAnchorGenerator::deserializeToDevice(const char*& hostBuffer, size_t count)
 {
     Weights w = copyToDevice(hostBuffer, count);
     hostBuffer += count * sizeof(float);
     return w;
 }
-bool GridAnchorGenerator::supportsFormat(DataType type, PluginFormat format) const
+bool MultiScaleAnchorGenerator::supportsFormat(DataType type, PluginFormat format) const
 {
     return (type == DataType::kFLOAT && format == PluginFormat::kNCHW);
 }
 
-const char* GridAnchorGenerator::getPluginType() const
+const char* MultiScaleAnchorGenerator::getPluginType() const
 {
-    return GRID_ANCHOR_PLUGIN_NAME;
+    return MULTI_SCALE_ANCHOR_PLUGIN_NAME;
 }
 
-const char* GridAnchorGenerator::getPluginVersion() const
+const char* MultiScaleAnchorGenerator::getPluginVersion() const
 {
-    return GRID_ANCHOR_PLUGIN_VERSION;
+    return MULTI_SCALE_ANCHOR_PLUGIN_VERSION;
 }
 
 // Set plugin namespace
-void GridAnchorGenerator::setPluginNamespace(const char* pluginNamespace)
+void MultiScaleAnchorGenerator::setPluginNamespace(const char* pluginNamespace)
 {
     mPluginNamespace = pluginNamespace;
 }
 
-const char* GridAnchorGenerator::getPluginNamespace() const
+const char* MultiScaleAnchorGenerator::getPluginNamespace() const
 {
     return mPluginNamespace;
 }
 
 #include <iostream>
 // Return the DataType of the plugin output at the requested index
-DataType GridAnchorGenerator::getOutputDataType(int index, const nvinfer1::DataType* inputTypes, int nbInputs) const
+DataType MultiScaleAnchorGenerator::getOutputDataType(int index, const nvinfer1::DataType* inputTypes, int nbInputs) const
 {
     ASSERT(index < mNumLayers);
     return DataType::kFLOAT;
 }
 
 // Return true if output tensor is broadcast across a batch.
-bool GridAnchorGenerator::isOutputBroadcastAcrossBatch(
+bool MultiScaleAnchorGenerator::isOutputBroadcastAcrossBatch(
     int outputIndex, const bool* inputIsBroadcasted, int nbInputs) const
 {
     return false;
 }
 
 // Return true if plugin can use input that is broadcast across batch without replication.
-bool GridAnchorGenerator::canBroadcastInputAcrossBatch(int inputIndex) const
+bool MultiScaleAnchorGenerator::canBroadcastInputAcrossBatch(int inputIndex) const
 {
     return false;
 }
 
 // Configure the layer with input and output data types.
-void GridAnchorGenerator::configurePlugin(const Dims* inputDims, int nbInputs, const Dims* outputDims, int nbOutputs,
+void MultiScaleAnchorGenerator::configurePlugin(const Dims* inputDims, int nbInputs, const Dims* outputDims, int nbOutputs,
     const DataType* inputTypes, const DataType* outputTypes, const bool* inputIsBroadcast,
     const bool* outputIsBroadcast, PluginFormat floatFormat, int maxBatchSize)
 {
@@ -349,61 +326,63 @@ void GridAnchorGenerator::configurePlugin(const Dims* inputDims, int nbInputs, c
 }
 
 // Attach the plugin object to an execution context and grant the plugin the access to some context resource.
-void GridAnchorGenerator::attachToContext(
+void MultiScaleAnchorGenerator::attachToContext(
     cudnnContext* cudnnContext, cublasContext* cublasContext, IGpuAllocator* gpuAllocator)
 {
 }
 
 // Detach the plugin object from its execution context.
-void GridAnchorGenerator::detachFromContext() {}
+void MultiScaleAnchorGenerator::detachFromContext() {}
 
-void GridAnchorGenerator::destroy()
+void MultiScaleAnchorGenerator::destroy()
 {
     delete this;
 }
 
-IPluginV2Ext* GridAnchorGenerator::clone() const
+IPluginV2Ext* MultiScaleAnchorGenerator::clone() const
 {
-    IPluginV2Ext* plugin = new GridAnchorGenerator(mParam.data(), mNumLayers);
+    IPluginV2Ext* plugin = new MultiScaleAnchorGenerator(mParam.data(), mNumLayers);
     plugin->setPluginNamespace(mPluginNamespace);
     return plugin;
 }
 
-GridAnchorPluginCreator::GridAnchorPluginCreator()
+MultiScaleAnchorPluginCreator::MultiScaleAnchorPluginCreator()
 {
-    mPluginAttributes.emplace_back(PluginField("minSize", nullptr, PluginFieldType::kFLOAT32, 1));
-    mPluginAttributes.emplace_back(PluginField("maxSize", nullptr, PluginFieldType::kFLOAT32, 1));
+    mPluginAttributes.emplace_back(PluginField("minLevel", nullptr, PluginFieldType::kINT32, 1));
+    mPluginAttributes.emplace_back(PluginField("maxLevel", nullptr, PluginFieldType::kINT32, 1));
     mPluginAttributes.emplace_back(PluginField("aspectRatios", nullptr, PluginFieldType::kFLOAT32, 1));
     mPluginAttributes.emplace_back(PluginField("featureMapShapes", nullptr, PluginFieldType::kINT32, 1));
-    mPluginAttributes.emplace_back(PluginField("variance", nullptr, PluginFieldType::kFLOAT32, 4));
     mPluginAttributes.emplace_back(PluginField("numLayers", nullptr, PluginFieldType::kINT32, 1));
+    mPluginAttributes.emplace_back(PluginField("scalesPerOctave", nullptr, PluginFieldType::kINT32, 1));
+    mPluginAttributes.emplace_back(PluginField("anchorScale", nullptr, PluginFieldType::kFLOAT32, 1));
 
     mFC.nbFields = mPluginAttributes.size();
     mFC.fields = mPluginAttributes.data();
 }
 
-const char* GridAnchorPluginCreator::getPluginName() const
+const char* MultiScaleAnchorPluginCreator::getPluginName() const
 {
-    return GRID_ANCHOR_PLUGIN_NAME;
+    return MULTI_SCALE_ANCHOR_PLUGIN_NAME;
 }
 
-const char* GridAnchorPluginCreator::getPluginVersion() const
+const char* MultiScaleAnchorPluginCreator::getPluginVersion() const
 {
-    return GRID_ANCHOR_PLUGIN_VERSION;
+    return MULTI_SCALE_ANCHOR_PLUGIN_VERSION;
 }
 
-const PluginFieldCollection* GridAnchorPluginCreator::getFieldNames()
+const PluginFieldCollection* MultiScaleAnchorPluginCreator::getFieldNames()
 {
     return &mFC;
 }
 
-IPluginV2Ext* GridAnchorPluginCreator::createPlugin(const char* name, const PluginFieldCollection* fc)
+IPluginV2Ext* MultiScaleAnchorPluginCreator::createPlugin(const char* name, const PluginFieldCollection* fc)
 {
-    float minScale = 0.2F, maxScale = 0.95F;
-    int numLayers = 6;
+    int minLevel = 3, maxLevel = 7;
+    int numLayers = 5;
+    int scalesPerOctave = 2;
+    float anchorScale = 4.0;
     std::vector<float> aspectRatios;
     std::vector<int> fMapShapes;
-    std::vector<float> layerVariances;
     const PluginField* fields = fc->fields;
     for (int i = 0; i < fc->nbFields; ++i)
     {
@@ -413,27 +392,20 @@ IPluginV2Ext* GridAnchorPluginCreator::createPlugin(const char* name, const Plug
             ASSERT(fields[i].type == PluginFieldType::kINT32);
             numLayers = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
         }
-        else if (!strcmp(attrName, "minSize"))
+        else if (!strcmp(attrName, "minLevel"))
         {
-            ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-            minScale = static_cast<float>(*(static_cast<const float*>(fields[i].data)));
+            ASSERT(fields[i].type == PluginFieldType::kINT32);
+            minLevel = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
         }
-        else if (!strcmp(attrName, "maxSize"))
+        else if (!strcmp(attrName, "maxLevel"))
         {
-            ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-            maxScale = static_cast<float>(*(static_cast<const float*>(fields[i].data)));
+            ASSERT(fields[i].type == PluginFieldType::kINT32);
+            maxLevel = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
         }
-        else if (!strcmp(attrName, "variance"))
+        else if (!strcmp(attrName, "anchorScale"))
         {
             ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-            int size = fields[i].length;
-            layerVariances.reserve(size);
-            const auto* lVar = static_cast<const float*>(fields[i].data);
-            for (int j = 0; j < size; j++)
-            {
-                layerVariances.push_back(*lVar);
-                lVar++;
-            }
+            anchorScale = static_cast<float>(*(static_cast<const float*>(fields[i].data)));
         }
         else if (!strcmp(attrName, "aspectRatios"))
         {
@@ -459,6 +431,11 @@ IPluginV2Ext* GridAnchorPluginCreator::createPlugin(const char* name, const Plug
                 fMap++;
             }
         }
+        else if (!strcmp(attrName, "scalesPerOctave"))
+        {
+            ASSERT(fields[i].type == PluginFieldType::kINT32);
+            scalesPerOctave = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+        }
     }
     // Reducing the number of boxes predicted by the first layer.
     // This is in accordance with the standard implementation.
@@ -467,43 +444,32 @@ IPluginV2Ext* GridAnchorPluginCreator::createPlugin(const char* name, const Plug
     ASSERT(numLayers > 0);
     ASSERT((int) fMapShapes.size() == numLayers);
 
-    int numFirstLayerARs = 3;
-    // First layer only has the first 3 aspect ratios from aspectRatios
-    firstLayerAspectRatios.reserve(numFirstLayerARs);
-    for (int i = 0; i < numFirstLayerARs; ++i)
-    {
-        firstLayerAspectRatios.push_back(aspectRatios[i]);
-    }
     // A comprehensive list of box parameters that are required by anchor generator
-    std::vector<GridAnchorParameters> boxParams(numLayers);
+    std::vector<MultiScaleAnchorParameters> boxParams(numLayers);
 
     // One set of box parameters for one layer
     for (int i = 0; i < numLayers; i++)
     {
-        // Only the first layer is different
-        if (i == 0)
-        {
-            boxParams[i] = {minScale, maxScale, firstLayerAspectRatios.data(), (int) firstLayerAspectRatios.size(),
-                fMapShapes[i], fMapShapes[i],
-                {layerVariances[0], layerVariances[1], layerVariances[2], layerVariances[3]}};
-        }
-        else
-        {
-            boxParams[i] = {minScale, maxScale, aspectRatios.data(), (int) aspectRatios.size(), fMapShapes[i],
-                fMapShapes[i], {layerVariances[0], layerVariances[1], layerVariances[2], layerVariances[3]}};
-        }
+        boxParams[i] = {
+            minLevel, maxLevel, 
+            aspectRatios.data(), (int) aspectRatios.size(), 
+            fMapShapes[i], fMapShapes[i],
+            anchorScale, scalesPerOctave,
+            pow(2, i + minLevel),
+             {1, 1, 1, 1} // variance no use
+            };
     }
 
-    GridAnchorGenerator* obj = new GridAnchorGenerator(boxParams.data(), numLayers);
+    MultiScaleAnchorGenerator* obj = new MultiScaleAnchorGenerator(boxParams.data(), numLayers);
     obj->setPluginNamespace(mNamespace.c_str());
     return obj;
 }
 
-IPluginV2Ext* GridAnchorPluginCreator::deserializePlugin(const char* name, const void* serialData, size_t serialLength)
+IPluginV2Ext* MultiScaleAnchorPluginCreator::deserializePlugin(const char* name, const void* serialData, size_t serialLength)
 {
     // This object will be deleted when the network is destroyed, which will
-    // call GridAnchor::destroy()
-    GridAnchorGenerator* obj = new GridAnchorGenerator(serialData, serialLength);
+    // call MultiScaleAnchor::destroy()
+    MultiScaleAnchorGenerator* obj = new MultiScaleAnchorGenerator(serialData, serialLength);
     obj->setPluginNamespace(mNamespace.c_str());
     return obj;
 }

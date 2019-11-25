@@ -93,6 +93,9 @@ pluginStatus_t reorgInference(
 pluginStatus_t anchorGridInference(cudaStream_t stream, GridAnchorParameters param, int numAspectRatios,
     const void* aspectRatios, const void* scales, void* outputData);
 
+pluginStatus_t multiScaleGridInference(cudaStream_t stream, MultiScaleAnchorParameters param, int numAspectRatios,
+    const void* aspectRatios, const void* scales, void* outputData);
+
 pluginStatus_t regionInference(cudaStream_t stream, int batch, int C, int H, int W, int num, int coords, int classes,
     bool hasSoftmaxTree, const nvinfer1::plugin::softmaxTree* smTree, const void* input, void* output);
 

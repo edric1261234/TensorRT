@@ -26,6 +26,7 @@ using namespace nvinfer1::plugin;
 #include "cropAndResizePlugin/cropAndResizePlugin.h"
 #include "flattenConcat/flattenConcat.h"
 #include "gridAnchorPlugin/gridAnchorPlugin.h"
+#include "multiScaleAnchorPlugin/multiScaleAnchorPlugin.h"
 #include "nmsPlugin/nmsPlugin.h"
 #include "normalizePlugin/normalizePlugin.h"
 #include "nvFasterRCNN/nvFasterRCNNPlugin.h"
@@ -101,6 +102,7 @@ extern "C" {
 bool initLibNvInferPlugins(void* logger, const char* libNamespace)
 {
     initializePlugin<nvinfer1::plugin::GridAnchorPluginCreator>(logger, libNamespace);
+    initializePlugin<nvinfer1::plugin::MultiScaleAnchorPluginCreator>(logger, libNamespace);
     initializePlugin<nvinfer1::plugin::NMSPluginCreator>(logger, libNamespace);
     initializePlugin<nvinfer1::plugin::ReorgPluginCreator>(logger, libNamespace);
     initializePlugin<nvinfer1::plugin::RegionPluginCreator>(logger, libNamespace);

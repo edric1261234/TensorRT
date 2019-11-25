@@ -37,6 +37,7 @@ set(PLUGIN_LISTS
     priorBoxPlugin
     reorgPlugin
     gridAnchorPlugin
+    multiScaleAnchorPlugin
     regionPlugin
     nvFasterRCNN
     batchedNMSPlugin

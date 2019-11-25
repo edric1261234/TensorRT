@@ -4,3 +4,4 @@ cmake-build*
 *.pb
 *.uff
 *__pycache_*
+.vscode

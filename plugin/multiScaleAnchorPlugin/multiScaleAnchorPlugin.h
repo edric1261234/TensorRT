@@ -13,8 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TRT_GRID_ANCHOR_PLUGIN_H
-#define TRT_GRID_ANCHOR_PLUGIN_H
+#ifndef TRT_MULTI_SCALE_ANCHOR_PLUGIN_H
+#define TRT_MULTI_SCALE_ANCHOR_PLUGIN_H
 #include "cudnn.h"
 #include "kernel.h"
 #include "plugin.h"
@@ -26,14 +26,14 @@ namespace nvinfer1
 {
 namespace plugin
 {
-class GridAnchorGenerator : public IPluginV2Ext
+class MultiScaleAnchorGenerator : public IPluginV2Ext
 {
 public:
-    GridAnchorGenerator(const GridAnchorParameters* param, int numLayers);
+    MultiScaleAnchorGenerator(const MultiScaleAnchorParameters* param, int numLayers);
 
-    GridAnchorGenerator(const void* data, size_t length);
+    MultiScaleAnchorGenerator(const void* data, size_t length);
 
-    ~GridAnchorGenerator() override;
+    ~MultiScaleAnchorGenerator() override;
 
     int getNbOutputs() const override;
 
@@ -83,24 +83,26 @@ public:
 
 private:
     Weights copyToDevice(const void* hostData, size_t count);
+
     Weights copyToHost(const void* deviceData, size_t count);
+    
     void serializeFromDevice(char*& hostBuffer, Weights deviceWeights) const;
 
     Weights deserializeToDevice(const char*& hostBuffer, size_t count);
 
     int mNumLayers;
-    std::vector<GridAnchorParameters> mParam;
+    std::vector<MultiScaleAnchorParameters> mParam;
     int* mNumPriors;
     Weights *mDeviceWidths, *mDeviceHeights;
     const char* mPluginNamespace;
 };
 
-class GridAnchorPluginCreator : public BaseCreator
+class MultiScaleAnchorPluginCreator : public BaseCreator
 {
 public:
-    GridAnchorPluginCreator();
+    MultiScaleAnchorPluginCreator();
 
-    ~GridAnchorPluginCreator() override = default;
+    ~MultiScaleAnchorPluginCreator() override = default;
 
     const char* getPluginName() const override;
 
@@ -119,4 +121,4 @@ private:
 } // namespace plugin
 } // namespace nvinfer1
 
-#endif // TRT_GRID_ANCHOR_PLUGIN_H
+#endif // TRT_MULTISCALE_ANCHOR_PLUGIN_H

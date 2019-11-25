@@ -243,6 +243,10 @@ void DetectionOutput::configurePlugin(const Dims* inputDims, int nbInputs, const
     const int numLocClasses = param.shareLocation ? 1 : param.numClasses;
 
     // Verify C1
+    std::cout << "numPriors=" << numPriors <<
+    " numLocClasses=" << numLocClasses <<
+    " nbBoxCoordinates=" << nbBoxCoordinates <<
+    " inputDims[param.inputOrder[0]].d[0]=" << inputDims[param.inputOrder[0]].d[0] << std::endl;
     ASSERT(numPriors * numLocClasses * nbBoxCoordinates == inputDims[param.inputOrder[0]].d[0]);
 
     // Verify C2

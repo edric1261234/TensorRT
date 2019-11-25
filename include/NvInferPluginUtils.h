@@ -148,6 +148,29 @@ struct GridAnchorParameters
 };
 
 //!
+//! \brief The Anchor Generator plugin layer generates the prior boxes of designated sizes and aspect ratios across all dimensions (H x W).
+//! GridAnchorParameters defines a set of parameters for creating the plugin layer for all feature maps.
+//! It contains:
+//! \param minScale Scale of anchors corresponding to finest resolution.
+//! \param maxScale Scale of anchors corresponding to coarsest resolution.
+//! \param aspectRatios List of aspect ratios to place on each grid point.
+//! \param numAspectRatios Number of elements in aspectRatios.
+//! \param H Height of feature map to generate anchors for.
+//! \param W Width of feature map to generate anchors for.
+//! \param variance Variance for adjusting the prior boxes.
+//!
+struct MultiScaleAnchorParameters
+{
+    int minLevel, maxLevel;
+    float* aspectRatios;
+    int numAspectRatios, H, W;
+    float anchorScale;
+    int scalesPerOctave;
+    int aspectStride;
+    float variance[4];
+};
+
+//!
 //! \enum CodeTypeSSD
 //! \brief The type of encoding used for decoding the bounding boxes and loc_data.
 //!

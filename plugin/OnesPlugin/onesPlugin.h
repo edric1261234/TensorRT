@@ -13,27 +13,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TRT_GRID_ANCHOR_PLUGIN_H
-#define TRT_GRID_ANCHOR_PLUGIN_H
-#include "cudnn.h"
-#include "kernel.h"
-#include "plugin.h"
-#include <cublas_v2.h>
+#ifndef TRT_RESIZENEAREST_PLUGIN_H
+#define TRT_Ones_PLUGIN_H
+
+#include <cassert>
+#include <cuda_runtime_api.h>
+#include <string.h>
 #include <string>
 #include <vector>
+
+#include "NvInfer.h"
+#include "NvInferPlugin.h"
+#include "maskRCNNKernels.h"
 
 namespace nvinfer1
 {
 namespace plugin
 {
-class GridAnchorGenerator : public IPluginV2Ext
+class Ones : public IPluginV2Ext
 {
 public:
-    GridAnchorGenerator(const GridAnchorParameters* param, int numLayers);
+    Ones(int width, int height, int interpolation);
 
-    GridAnchorGenerator(const void* data, size_t length);
+    Ones(const void* data, size_t length);
 
-    ~GridAnchorGenerator() override;
+    ~Ones() override = default;
 
     int getNbOutputs() const override;
 
@@ -43,10 +47,12 @@ public:
 
     void terminate() override;
 
-    size_t getWorkspaceSize(int maxBatchSize) const override;
+    void destroy() override;
+
+    size_t getWorkspaceSize(int) const override;
 
     int enqueue(
-        int batchSize, const void* const* inputs, void** outputs, void* workspace, cudaStream_t stream) override;
+        int batch_size, const void* const* inputs, void** outputs, void* workspace, cudaStream_t stream) override;
 
     size_t getSerializationSize() const override;
 
@@ -58,11 +64,9 @@ public:
 
     const char* getPluginVersion() const override;
 
-    void destroy() override;
-
     IPluginV2Ext* clone() const override;
 
-    void setPluginNamespace(const char* pluginNamespace) override;
+    void setPluginNamespace(const char* libNamespace) override;
 
     const char* getPluginNamespace() const override;
 
@@ -82,25 +86,18 @@ public:
     void detachFromContext() override;
 
 private:
-    Weights copyToDevice(const void* hostData, size_t count);
-    Weights copyToHost(const void* deviceData, size_t count);
-    void serializeFromDevice(char*& hostBuffer, Weights deviceWeights) const;
-
-    Weights deserializeToDevice(const char*& hostBuffer, size_t count);
-
-    int mNumLayers;
-    std::vector<GridAnchorParameters> mParam;
-    int* mNumPriors;
-    Weights *mDeviceWidths, *mDeviceHeights;
-    const char* mPluginNamespace;
+    int mWidth, mHeight, mInterpolation;
+    Dims mInputDims;
+    Dims mOutputDims;
+    std::string mNameSpace;
 };
 
-class GridAnchorPluginCreator : public BaseCreator
+class OnesPluginCreator : public BaseCreator
 {
 public:
-    GridAnchorPluginCreator();
+    OnesPluginCreator();
 
-    ~GridAnchorPluginCreator() override = default;
+    ~OnesPluginCreator(){};
 
     const char* getPluginName() const override;
 
@@ -110,13 +107,13 @@ public:
 
     IPluginV2Ext* createPlugin(const char* name, const PluginFieldCollection* fc) override;
 
-    IPluginV2Ext* deserializePlugin(const char* name, const void* serialData, size_t serialLength) override;
+    IPluginV2Ext* deserializePlugin(const char* name, const void* data, size_t length) override;
 
 private:
     static PluginFieldCollection mFC;
+    int mWidth, mHeight, mInterpolation;
     static std::vector<PluginField> mPluginAttributes;
 };
 } // namespace plugin
 } // namespace nvinfer1
-
-#endif // TRT_GRID_ANCHOR_PLUGIN_H
+#endif // TRT_Ones_PLUGIN_H
