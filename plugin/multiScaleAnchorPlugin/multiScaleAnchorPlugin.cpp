@@ -439,7 +439,7 @@ IPluginV2Ext* MultiScaleAnchorPluginCreator::createPlugin(const char* name, cons
             aspectRatios.data(), (int) aspectRatios.size(), 
             fMapShapes[i], fMapShapes[i],
             anchorScale, scalesPerOctave,
-            pow(2, i + minLevel),
+            static_cast<int>(pow(2, i + minLevel)),
              {1, 1, 1, 1} // variance no use
             };
     }

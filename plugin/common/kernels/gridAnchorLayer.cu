@@ -18,6 +18,9 @@
 #include <iostream>
 
 using nvinfer1::rt::reduced_divisor;
+void nvinfer1::rt::detail::find_divisor(int denom, unsigned int& mul_coeff, unsigned int& shift_coeff) 
+{
+}
 template <unsigned nthdsPerCTA>
         __launch_bounds__(nthdsPerCTA)
         __global__ void gridAnchorKernel(

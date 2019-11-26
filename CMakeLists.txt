@@ -21,6 +21,7 @@ include(cmake/modules/find_library_create_target.cmake)
 set_ifndef(TRT_LIB_DIR ${CMAKE_BINARY_DIR})
 set_ifndef(TRT_BIN_DIR ${CMAKE_BINARY_DIR})
 
+set_ifndef(CUDA_TOOLKIT_ROOT_DIR "C://Program Files//NVIDIA GPU Computing Toolkit//CUDA//v10.0//lib//x64")
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/include/NvInferVersion.h" VERSION_STRINGS REGEX "#define NV_TENSORRT_.*")
 
 foreach(TYPE MAJOR MINOR PATCH BUILD)
@@ -54,8 +55,8 @@ if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 endif(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 
 option(BUILD_PLUGINS "Build TensorRT plugin" ON)
-option(BUILD_PARSERS "Build TensorRT parsers" ON)
-option(BUILD_SAMPLES "Build TensorRT samples" ON)
+option(BUILD_PARSERS "Build TensorRT parsers" OFF)
+option(BUILD_SAMPLES "Build TensorRT samples" OFF)
 option(NVPARTNER "Build partner repos from source" OFF)
 option(NVINTERNAL "Build in NVIDIA internal source tree" OFF)
 
@@ -75,9 +76,9 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     message("Building in debug mode ${DEBUG_POSTFIX}")
 endif()
 
-set(CMAKE_CXX_FLAGS "-Wno-deprecated-declarations ${CMAKE_CXX_FLAGS} -DBUILD_SYSTEM=cmake_oss")
+set(CMAKE_CXX_FLAGS " ${CMAKE_CXX_FLAGS} -DBUILD_SYSTEM=cmake_oss")
 
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wno-deprecated-declarations")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler")
 
 ################################### DEPENDENCIES ##########################################
 set(DEFAULT_CUDA_VERSION 10.0)
@@ -137,9 +138,9 @@ if (NVINTERNAL)
         ${CUDNN_ROOT_DIR}/lib64)
 
     find_library(CUBLAS_LIB cublas HINTS
-        ${CUDA_TOOLKIT_ROOT_DIR}/lib NO_DEFAULT_PATH)
+        ${CUDA_TOOLKIT_ROOT_DIR} NO_DEFAULT_PATH)
     find_library(CUBLAS_LIB cublas HINTS
-        ${CUDA_TOOLKIT_ROOT_DIR}/lib)
+        ${CUDA_TOOLKIT_ROOT_DIR})
 
     if(BUILD_PARSERS)
         #TODO: Change this to configure_protobuf_internal(${PROTOBUF_INTERNAL_VERSION}) once onnx-tensorrts build system is fixed

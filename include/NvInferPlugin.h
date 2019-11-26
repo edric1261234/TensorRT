@@ -24,6 +24,21 @@
 //!
 //! This is the API for the Nvidia provided TensorRT plugins.
 //!
+#ifdef WIN32
+#ifdef DLL_EXPORTS
+#define EXPORT_CLASS   __declspec(dllexport)
+#define EXPORT_API  extern "C" __declspec(dllexport)
+#define EXPORT_CLASS_API
+
+#else
+#define EXPORT_CLASS   __declspec(dllimport )
+#define EXPORT_API  extern "C" __declspec(dllimport )
+#endif
+#else
+#define EXPORT_CLASS
+#define EXPORT_API  extern "C" __attribute__((visibility("default")))   
+#define EXPORT_CLASS_API __attribute__((visibility("default")))   
+#endif
 
 extern "C"
 {
@@ -34,7 +49,7 @@ extern "C"
 //! \param logger Logger object to print plugin registration information
 //! \param libNamespace Namespace used to register all the plugins in this library
 //!
-TENSORRTAPI bool initLibNvInferPlugins(void* logger, const char* libNamespace);
+ TENSORRTAPI bool initLibNvInferPlugins(void* logger, const char* libNamespace);
 } // extern "C"
 
 #endif // NV_INFER_PLUGIN_H

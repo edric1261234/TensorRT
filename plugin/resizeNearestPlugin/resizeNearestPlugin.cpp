@@ -19,6 +19,7 @@
 #include <iostream>
 #include<fstream>
 #include<iostream>
+#include <Windows.h>
 
 #define DEBUG 1
 
@@ -234,7 +235,7 @@ int ResizeNearest::enqueue(
     int ibatchstride =  mInputDims.d[1] * istride;
     int obatchstride = mOutputDims.d[1] * ostride;
     dim3 block(32, 16);
-    dim3 grid((osize.x - 1) / block.x + 1, (osize.y - 1) / block.y + 1, std::min(batch_size * nchan, 65535));
+    dim3 grid((osize.x - 1) / block.x + 1, (osize.y - 1) / block.y + 1, min(batch_size * nchan, 65535));
 
     if (mInterpolation == 0) {
         resizeBilinear(grid, block, stream, batch_size * nchan, scale, osize, static_cast<float const*>(inputs[0]), istride,
