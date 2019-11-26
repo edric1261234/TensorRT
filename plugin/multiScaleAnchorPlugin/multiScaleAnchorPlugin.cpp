@@ -45,7 +45,7 @@ MultiScaleAnchorGenerator::MultiScaleAnchorGenerator(const MultiScaleAnchorParam
     for (int id = 0; id < mNumLayers; id++)
     {
         mParam[id] = paramIn[id];
-        std::cout << "mParam[id] H " << mParam[id].H << std::endl;
+        //std::cout << "mParam[id] H " << mParam[id].H << std::endl;
         ASSERT(mParam[id].numAspectRatios >= 0 && mParam[id].aspectRatios != nullptr);
 
         mParam[id].aspectRatios = (float*) malloc(sizeof(float) * mParam[id].numAspectRatios);
@@ -80,11 +80,6 @@ MultiScaleAnchorGenerator::MultiScaleAnchorGenerator(const MultiScaleAnchorParam
             for (int j = 0; j < scales.size(); j++) {
                 tmpWidths.push_back(scales[j] * sqrt_AR);
                 tmpHeights.push_back(scales[j] / sqrt_AR);
-                // std::cout << 
-                // aspect_ratios[i] << " " <<
-                // scales[j] << " " << 
-                // scales[j] * sqrt_AR << " " << 
-                // scales[j] / sqrt_AR << std::endl;
             }
         }
 
@@ -97,7 +92,10 @@ MultiScaleAnchorGenerator::MultiScaleAnchorGenerator(const void* data, size_t le
 {
     const char *d = reinterpret_cast<const char*>(data), *a = d;
     mNumLayers = read<int>(d);
-    
+    int scalesPerOctave = read<int>(d);
+    CUASSERT(cudaMallocHost((void**) &mNumPriors, mNumLayers * sizeof(int)));
+    CUASSERT(cudaMallocHost((void**) &mDeviceWidths, mNumLayers  * sizeof(Weights)));
+    CUASSERT(cudaMallocHost((void**) &mDeviceHeights, mNumLayers  * sizeof(Weights)));
     mParam.resize(mNumLayers);
     for (int id = 0; id < mNumLayers; id++)
     {
@@ -112,21 +110,13 @@ MultiScaleAnchorGenerator::MultiScaleAnchorGenerator(const void* data, size_t le
         }
         mParam[id].H = read<int>(d);
         mParam[id].W = read<int>(d);
-        for (int i = 0; i < 4; ++i)
-        {
-            mParam[id].variance[i] = read<float>(d);
-        }
-
         mNumPriors[id] = read<int>(d);
+        mParam[id].anchorScale = read<float>(d);
+        mParam[id].scalesPerOctave = scalesPerOctave;
+
         mDeviceWidths[id] = deserializeToDevice(d, mNumPriors[id]);
         mDeviceHeights[id] = deserializeToDevice(d, mNumPriors[id]);
-
-        mParam[id].anchorScale = read<float>(d);
-        mParam[id].scalesPerOctave = read<int>(d);
     }
-    CUASSERT(cudaMallocHost((void**) &mNumPriors, mNumLayers * sizeof(int)));
-    CUASSERT(cudaMallocHost((void**) &mDeviceWidths, mNumLayers * mParam[0].scalesPerOctave * sizeof(Weights)));
-    CUASSERT(cudaMallocHost((void**) &mDeviceHeights, mNumLayers * mParam[0].scalesPerOctave * sizeof(Weights)));
     ASSERT(d == a + length);
 }
 
@@ -178,34 +168,32 @@ int MultiScaleAnchorGenerator::enqueue(
         pluginStatus_t status = multiScaleGridInference(
             stream, mParam[id], mNumPriors[id], mDeviceWidths[id].values, mDeviceHeights[id].values, outputData);
         ASSERT(status == STATUS_SUCCESS);
-        Weights w = copyToHost(outputData, 64);
-        const float* ptr = static_cast<const float*>(w.values);
-        for (int i = 0; i < 64 / 4; i++) {
-            std::cout << i 
-            << ":" << *(ptr + 4 * i ) * 640
-            << " " << *(ptr + 4 * i + 1) * 640
-            << " " << *(ptr + 4 * i + 2) * 640
-            << " " << *(ptr + 4 * i + 3) * 640
-            << std::endl;
-        }
-        std::cout << "=================" << std::endl;
-        
+        // Weights w = copyToHost(outputData, 64);
+        // const float* ptr = static_cast<const float*>(w.values);
+        // for (int i = 0; i < 64 / 4; i++) {
+        //     std::cout << i 
+        //     << ":" << *(ptr + 4 * i ) * 640
+        //     << " " << *(ptr + 4 * i + 1) * 640
+        //     << " " << *(ptr + 4 * i + 2) * 640
+        //     << " " << *(ptr + 4 * i + 3) * 640
+        //     << std::endl;
+        // }
+        // std::cout << "=================" << std::endl;
     }
     return STATUS_SUCCESS;
 }
 
 size_t MultiScaleAnchorGenerator::getSerializationSize() const
 {
-    size_t sum = sizeof(int); // mNumLayers
+    size_t sum = 2 * sizeof(int); // mNumLayers, scalesPerOctave
     for (int i = 0; i < mNumLayers; i++)
     {
-        sum += 4 * sizeof(int); // mNumPriors, mParam[i].{numAspectRatios, H, W}
-        sum += (6 + mParam[i].numAspectRatios)
-            * sizeof(float); // mParam[i].{minSize, maxSize, aspectRatios, variance[4]}
+        sum += 3 * sizeof(int); // minLevel, maxLevel, numAspectRatios
+        sum += mParam[i].numAspectRatios * sizeof(float); //  aspectRatios
+        sum += 3 * sizeof(int); // H, W, mNumPriors
+        sum += sizeof(float); // anchorScale
         sum += mDeviceWidths[i].count * sizeof(float);
         sum += mDeviceHeights[i].count * sizeof(float);
-        sum += sizeof(float); // anchorScale
-        sum += sizeof(int); //scalesPerOctave
     }
     return sum;
 }
@@ -214,6 +202,8 @@ void MultiScaleAnchorGenerator::serialize(void* buffer) const
 {
     char *d = reinterpret_cast<char*>(buffer), *a = d;
     write(d, mNumLayers);
+    std::cout << mNumLayers << std::endl;
+    write(d, mParam[0].scalesPerOctave);
     for (int id = 0; id < mNumLayers; id++)
     {
         // we have to serialize GridAnchorParameters by hand
@@ -226,14 +216,8 @@ void MultiScaleAnchorGenerator::serialize(void* buffer) const
         }
         write(d, mParam[id].H);
         write(d, mParam[id].W);
-        for (int i = 0; i < 4; ++i)
-        {
-            write(d, mParam[id].variance[i]);
-        }
-
         write(d, mNumPriors[id]);
         write(d, mParam[id].anchorScale);
-        write(d, mParam[id].scalesPerOctave);
 
         serializeFromDevice(d, mDeviceWidths[id]);
         serializeFromDevice(d, mDeviceHeights[id]);
