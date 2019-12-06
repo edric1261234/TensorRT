@@ -215,17 +215,6 @@ int GridAnchorGenerator::enqueue(
         pluginStatus_t status = anchorGridInference(
             stream, mParam[id], mNumPriors[id], mDeviceWidths[id].values, mDeviceHeights[id].values, outputData);
         ASSERT(status == STATUS_SUCCESS);
-        // Weights w = copyToHost(outputData, 16);
-        // const float* ptr = static_cast<const float*>(w.values);
-        // for (int i = 0; i < 16 / 4; i++) {
-        //     std::cout << i 
-        //     << ":" << *(ptr + 4 * i ) 
-        //     << " " << *(ptr + 4 * i + 1) 
-        //     << " " << *(ptr + 4 * i + 2) 
-        //     << " " << *(ptr + 4 * i + 3) 
-        //     << std::endl;
-        // }
-        // std::cout << "=================" << std::endl;
     }
     return STATUS_SUCCESS;
 }
