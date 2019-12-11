@@ -113,6 +113,10 @@ MultiScaleAnchorGenerator::MultiScaleAnchorGenerator(const void* data, size_t le
         mNumPriors[id] = read<int>(d);
         mParam[id].anchorScale = read<float>(d);
         mParam[id].scalesPerOctave = scalesPerOctave;
+        for (int i = 0; i < 4; ++i)
+        {
+            mParam[id].variance[i] = read<float>(d);
+        }
 
         mDeviceWidths[id] = deserializeToDevice(d, mNumPriors[id]);
         mDeviceHeights[id] = deserializeToDevice(d, mNumPriors[id]);
@@ -168,17 +172,6 @@ int MultiScaleAnchorGenerator::enqueue(
         pluginStatus_t status = multiScaleGridInference(
             stream, mParam[id], mNumPriors[id], mDeviceWidths[id].values, mDeviceHeights[id].values, outputData);
         ASSERT(status == STATUS_SUCCESS);
-        // Weights w = copyToHost(outputData, 64);
-        // const float* ptr = static_cast<const float*>(w.values);
-        // for (int i = 0; i < 64 / 4; i++) {
-        //     std::cout << i 
-        //     << ":" << *(ptr + 4 * i ) * 640
-        //     << " " << *(ptr + 4 * i + 1) * 640
-        //     << " " << *(ptr + 4 * i + 2) * 640
-        //     << " " << *(ptr + 4 * i + 3) * 640
-        //     << std::endl;
-        // }
-        // std::cout << "=================" << std::endl;
     }
     return STATUS_SUCCESS;
 }
@@ -192,6 +185,7 @@ size_t MultiScaleAnchorGenerator::getSerializationSize() const
         sum += mParam[i].numAspectRatios * sizeof(float); //  aspectRatios
         sum += 3 * sizeof(int); // H, W, mNumPriors
         sum += sizeof(float); // anchorScale
+        sum += 4 * sizeof(float); // variance[4]
         sum += mDeviceWidths[i].count * sizeof(float);
         sum += mDeviceHeights[i].count * sizeof(float);
     }
@@ -202,7 +196,6 @@ void MultiScaleAnchorGenerator::serialize(void* buffer) const
 {
     char *d = reinterpret_cast<char*>(buffer), *a = d;
     write(d, mNumLayers);
-    std::cout << mNumLayers << std::endl;
     write(d, mParam[0].scalesPerOctave);
     for (int id = 0; id < mNumLayers; id++)
     {
@@ -218,6 +211,10 @@ void MultiScaleAnchorGenerator::serialize(void* buffer) const
         write(d, mParam[id].W);
         write(d, mNumPriors[id]);
         write(d, mParam[id].anchorScale);
+        for (int i = 0; i < 4; ++i)
+        {
+            write(d, mParam[id].variance[i]);
+        }
 
         serializeFromDevice(d, mDeviceWidths[id]);
         serializeFromDevice(d, mDeviceHeights[id]);
@@ -339,7 +336,8 @@ MultiScaleAnchorPluginCreator::MultiScaleAnchorPluginCreator()
     mPluginAttributes.emplace_back(PluginField("numLayers", nullptr, PluginFieldType::kINT32, 1));
     mPluginAttributes.emplace_back(PluginField("scalesPerOctave", nullptr, PluginFieldType::kINT32, 1));
     mPluginAttributes.emplace_back(PluginField("anchorScale", nullptr, PluginFieldType::kFLOAT32, 1));
-
+    mPluginAttributes.emplace_back(PluginField("variance", nullptr, PluginFieldType::kFLOAT32, 4));
+    
     mFC.nbFields = mPluginAttributes.size();
     mFC.fields = mPluginAttributes.data();
 }
@@ -367,6 +365,7 @@ IPluginV2Ext* MultiScaleAnchorPluginCreator::createPlugin(const char* name, cons
     float anchorScale = 4.0;
     std::vector<float> aspectRatios;
     std::vector<int> fMapShapes;
+    std::vector<float> layerVariances;
     const PluginField* fields = fc->fields;
     for (int i = 0; i < fc->nbFields; ++i)
     {
@@ -420,6 +419,18 @@ IPluginV2Ext* MultiScaleAnchorPluginCreator::createPlugin(const char* name, cons
             ASSERT(fields[i].type == PluginFieldType::kINT32);
             scalesPerOctave = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
         }
+        else if (!strcmp(attrName, "variance"))
+        {
+            ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
+            int size = fields[i].length;
+            layerVariances.reserve(size);
+            const auto* lVar = static_cast<const float*>(fields[i].data);
+            for (int j = 0; j < size; j++)
+            {
+                layerVariances.push_back(*lVar);
+                lVar++;
+            }
+        }
     }
     // Reducing the number of boxes predicted by the first layer.
     // This is in accordance with the standard implementation.
@@ -439,8 +450,10 @@ IPluginV2Ext* MultiScaleAnchorPluginCreator::createPlugin(const char* name, cons
             aspectRatios.data(), (int) aspectRatios.size(), 
             fMapShapes[i], fMapShapes[i],
             anchorScale, scalesPerOctave,
-            static_cast<int>(pow(2, i + minLevel)),
-             {1, 1, 1, 1} // variance no use
+             static_cast<int>(pow(2, i + minLevel)),
+            //  {1, 1, 1, 1} // variance no use
+            //pow(2, i + minLevel),
+            {layerVariances[0], layerVariances[1], layerVariances[2], layerVariances[3]}
             };
     }
 

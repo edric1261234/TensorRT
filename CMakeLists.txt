@@ -174,9 +174,13 @@ endif()
 
 find_library_create_target(nvinfer nvinfer SHARED ${TRT_LIB_DIR})
 
+set(ADDITIONAL_LIBRARY ${ADDITIONAL_LIBRARY})
+message(STATUS "ADDITIONAL_LIBRARY = ${ADDITIONAL_LIBRARY}")
+
 if (NOT (NVINTERNAL OR NVPARTNER))
     find_library_create_target(nvuffparser nvparsers SHARED ${TRT_LIB_DIR})
 endif()
+set(ADDITIONAL_LIBRARY ${ADDITIONAL_LIBRARY})
 
 find_library(CUDART_LIB cudart HINTS ${CUDA_TOOLKIT_ROOT_DIR} PATH_SUFFIXES lib lib64)
 find_library(RT_LIB rt)
@@ -184,6 +188,8 @@ find_library(RT_LIB rt)
 set(CUDA_LIBRARIES ${CUDART_LIB})
 ############################################################################################
 # TensorRT
+
+message(STATUS "ADDITIONAL_LIBRARY = ${ADDITIONAL_LIBRARY}")
 
 if(BUILD_PLUGINS)
     add_subdirectory(plugin${NVINTERNAL_SUFFIX})
@@ -201,6 +207,8 @@ else()
     find_library_create_target(nvcaffeparser nvparsers SHARED ${TRT_BIN_DIR} ${TRT_LIB_DIR})
     find_library_create_target(nvonnxparser nvonnxparser SHARED ${TRT_BIN_DIR} ${TRT_LIB_DIR})
 endif()
+
+
 
 if(BUILD_SAMPLES)
     add_subdirectory(samples${NVINTERNAL_SUFFIX})

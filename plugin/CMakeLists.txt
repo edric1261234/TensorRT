@@ -79,6 +79,9 @@ target_include_directories(${SHARED_TARGET}
     PRIVATE ${TARGET_DIR}
 )
 
+
+
+
 set_target_properties(${SHARED_TARGET} PROPERTIES
     CXX_STANDARD "11"
     CXX_STANDARD_REQUIRED "YES"
@@ -96,12 +99,22 @@ set_target_properties(${SHARED_TARGET} PROPERTIES VERSION ${TRT_VERSION} SOVERSI
 
 set_property(TARGET ${SHARED_TARGET} PROPERTY CUDA_STANDARD 11)
 
-target_link_libraries(${SHARED_TARGET}
-    ${CUBLAS_LIB}
-    ${CUDART_LIB}
-    ${CUDNN_LIB}
-    nvinfer
-)
+# 添加静态库
+if (WIN32)
+    set(ADDITIONAL_LIBRARY ${ADDITIONAL_LIBRARY} PARENT_SCOPE)
+    message(STATUS "ADDITIONAL_LIBRARY = ${ADDITIONAL_LIBRARY}")
+    target_link_libraries(${SHARED_TARGET} ${ADDITIONAL_LIBRARY}  ${CUBLAS_LIB} ${CUDART_LIB} ${CUDNN_LIB})
+    # 添加导出函数的宏
+    add_definitions(-D TENSORRT_BUILD_LIB)
+else()
+    target_link_libraries(${SHARED_TARGET}
+        ${CUBLAS_LIB}
+        ${CUDART_LIB}
+        ${CUDNN_LIB}
+        nvinfer
+    )
+endif()
+
 
 ################################## STATIC LIBRARY #######################################
 
