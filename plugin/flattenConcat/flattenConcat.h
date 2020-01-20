@@ -113,6 +113,9 @@ private:
     nvinfer1::Dims mCHW;
     const char* mPluginNamespace;
     cublasHandle_t mCublas;
+
+    float* inputTemp = nullptr;
+    int inputTempLength = 0;
 };
 
 class FlattenConcatPluginCreator : public BaseCreator

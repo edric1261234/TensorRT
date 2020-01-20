@@ -101,6 +101,10 @@ FlattenConcat::~FlattenConcat()
     {
         LOG_ERROR(cudaFreeHost(mCopySize));
     }
+    if (inputTemp != nullptr) {
+        LOG_ERROR(cudaFree(inputTemp));
+        inputTempLength = 0;
+    }
 }
 
 int FlattenConcat::getNbOutputs() const
@@ -176,8 +180,19 @@ int FlattenConcat::enqueue(int batchSize, const void* const* inputs, void** outp
     for (int i = 0; i < mNumInputs; ++i)
     {
         const auto* input = reinterpret_cast<const float*>(inputs[i]);
-        float* inputTemp;
-        LOG_ERROR(cudaMalloc(&inputTemp, mCopySize[i] * batchSize));
+
+        if (inputTemp == nullptr) {
+            
+            LOG_ERROR(cudaMalloc(&inputTemp, mCopySize[i] * batchSize));
+            inputTempLength = mCopySize[i] * batchSize;
+            std::cout << "malloc " << inputTempLength << std::endl;
+        } else if (inputTempLength < mCopySize[i] * batchSize) {
+            LOG_ERROR(cudaFree(inputTemp));
+            LOG_ERROR(cudaMalloc(&inputTemp, mCopySize[i] * batchSize));
+            inputTempLength = mCopySize[i] * batchSize;
+            std::cout << "re malloc " << inputTempLength << std::endl;
+        }
+        
         LOG_ERROR(cudaMemcpyAsync(inputTemp, input, mCopySize[i] * batchSize, cudaMemcpyDeviceToDevice, stream));
 
         for (int n = 0; n < numConcats; ++n)
@@ -185,7 +200,7 @@ int FlattenConcat::enqueue(int batchSize, const void* const* inputs, void** outp
             LOG_ERROR(cublasScopy(mCublas, mInputConcatAxis[i], inputTemp + n * mInputConcatAxis[i], 1,
                 output + (n * mOutputConcatAxis + offset), 1));
         }
-        LOG_ERROR(cudaFree(inputTemp));
+        
         offset += mInputConcatAxis[i];
     }
 
